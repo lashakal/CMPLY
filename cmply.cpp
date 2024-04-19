@@ -37,10 +37,15 @@ public:
                 } else {
                     tokens.push_back({TokenType::Identifier, identifier});
                 }
-            } else if (source[position] == ';') {
+            } else if (source[position] == ';' || source[position] == '(' || source[position] == ')' ||
+                    source[position] == '{' || source[position] == '}') {
                 tokens.push_back({TokenType::Operator, std::string(1, source[position++])});
+            } else if (source[position] == '+' || source[position] == '-' || source[position] == '*' ||
+                    source[position] == '/' || source[position] == '<' || source[position] == '>' ||
+                    source[position] == '=' || source[position] == '!') {
+                tokens.push_back(readOperator());
             } else {
-                tokens.push_back({TokenType::Operator, std::string(1, source[position++])});
+                throw std::runtime_error("Unexpected character in input: " + std::string(1, source[position]));
             }
         }
         tokens.push_back({TokenType::EndOfFile, ""});
@@ -88,6 +93,22 @@ private:
         size_t start = position;
         while (position < source.length() && (std::isalnum(source[position]) || source[position] == '_')) position++;
         return source.substr(start, position - start);
+    }
+
+    Token readOperator() {
+        char currentChar = source[position++];
+        if ((currentChar == '<' || currentChar == '>' || currentChar == '=' || currentChar == '!') &&
+            position < source.length() && source[position] == '=') {
+            char nextChar = source[position++];
+            return {TokenType::Operator, std::string(1, currentChar) + nextChar};
+        } else if (currentChar == '+' && position < source.length() && source[position] == '+') {
+            char nextChar = source[position++];
+            return {TokenType::Operator, std::string(1, currentChar) + nextChar};
+        } else if (currentChar == '-' && position < source.length() && source[position] == '-') {
+            char nextChar = source[position++];
+            return {TokenType::Operator, std::string(1, currentChar) + nextChar};
+        }
+        return {TokenType::Operator, std::string(1, currentChar)};
     }
 
     bool isKeyword(const std::string& word) {
@@ -145,6 +166,13 @@ struct BinaryExpression : Expression {
             : left(std::move(left)), right(std::move(right)), op(op) {}
 };
 
+struct IncrementExpression : Expression {
+    std::string identifier;
+    std::string op;
+    IncrementExpression(const std::string& identifier, const std::string& op)
+            : identifier(identifier), op(op) {}
+};
+
 struct Assignment : ASTNode {
     std::string identifier;
     std::unique_ptr<Expression> expression;
@@ -180,12 +208,31 @@ struct FunctionDefinition : ASTNode {
             : identifier(identifier), parameters(std::move(parameters)), body(std::move(body)) {}
 };
 
+struct IfStatement : ASTNode {
+    std::unique_ptr<Expression> condition;
+    std::unique_ptr<ASTNode> thenBranch;
+    std::unique_ptr<ASTNode> elseBranch;
+    IfStatement(std::unique_ptr<Expression> condition, std::unique_ptr<ASTNode> thenBranch, std::unique_ptr<ASTNode> elseBranch = nullptr)
+            : condition(std::move(condition)), thenBranch(std::move(thenBranch)), elseBranch(std::move(elseBranch)) {}
+};
 
+struct ForLoop : ASTNode {
+    std::unique_ptr<VariableDeclaration> initializer;
+    std::unique_ptr<Expression> condition;
+    std::unique_ptr<ASTNode> increment;
+    std::unique_ptr<ASTNode> body;
+    ForLoop(std::unique_ptr<VariableDeclaration> initializer, std::unique_ptr<Expression> condition, std::unique_ptr<ASTNode> increment, std::unique_ptr<ASTNode> body)
+            : initializer(std::move(initializer)), condition(std::move(condition)), increment(std::move(increment)), body(std::move(body)) {}
+};
 
 struct Program : ASTNode {
     std::vector<std::unique_ptr<ASTNode>> statements;
 };
 
+
+// ---------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------
 
 
 class Parser {
@@ -211,6 +258,10 @@ private:
             return node;
         } else if (match(TokenType::Keyword, "def")) {
             return parseFunctionDefinition();
+        } else if (match(TokenType::Keyword, "if")) {
+            return parseIfStatement();
+        } else if (match(TokenType::Keyword, "for")) {
+            return parseForLoop();
         } else if (match(TokenType::Keyword, "print")) {
             auto node = parsePrintStatement();
             expect(TokenType::Operator, "Expected ';' after print statement", ";");
@@ -220,6 +271,9 @@ private:
                 auto node =  parseFunctionCall();
                 expect(TokenType::Operator, "Expected ';' after function call", ";");
                 return node;
+            } else if (lookahead().value == "++" || lookahead().value == "--") {
+                auto node = parseIncrementExpression();
+                return node;
             } else {
                 auto node = parseAssignment();
                 expect(TokenType::Operator, "Expected ';' after assignment", ";");
@@ -228,6 +282,13 @@ private:
         } else {
             throw std::runtime_error("Unexpected token");
         }
+    }
+
+    std::unique_ptr<IncrementExpression> parseIncrementExpression() {
+        std::string identifier = previous().value;
+        std::string op = "++";
+        expect(TokenType::Operator, "Expected '++'", "++");
+        return std::make_unique<IncrementExpression>(identifier, op);
     }
 
     std::unique_ptr<VariableDeclaration> parseVariableDeclaration() {
@@ -285,7 +346,119 @@ private:
         return std::make_unique<FunctionCall>(identifier, std::move(arguments));
     }
 
+    std::unique_ptr<IfStatement> parseIfStatement() {
+        expect(TokenType::Operator, "Expected '(' after 'if'", "(");
+        auto condition = parseExpression();
+        expect(TokenType::Operator, "Expected ')' after condition", ")");
+        expect(TokenType::Operator, "Expected '{'", "{");
+        auto thenBranch = parseStatement();
+        expect(TokenType::Operator, "Expected '}'", "}");
+        std::unique_ptr<ASTNode> elseBranch = nullptr;
+        if (match(TokenType::Keyword, "else")) {
+            expect(TokenType::Operator, "Expected '{'", "{");
+            elseBranch = parseStatement();
+            expect(TokenType::Operator, "Expected '}'", "}");
+        }
+        return std::make_unique<IfStatement>(std::move(condition), std::move(thenBranch), std::move(elseBranch));
+    }
+
+    std::unique_ptr<ForLoop> parseForLoop() {
+        expect(TokenType::Operator, "Expected '(' after 'for'", "(");
+        //match(TokenType::Keyword, "int") || match(TokenType::Keyword, "float");
+        expect(TokenType::Keyword, "Expected 'int'");
+        auto initializer = parseVariableDeclaration();
+        expect(TokenType::Operator, "Expected ';'", ";");
+        auto condition = parseExpression();
+        expect(TokenType::Operator, "Expected ';'", ";");
+        auto increment = parseStatement();  // struggles with x++
+        expect(TokenType::Operator, "Expected ')' after loop increments", ")");
+        expect(TokenType::Operator, "Expected '{'", "{");
+        auto body = parseStatement();
+        expect(TokenType::Operator, "Expected '}'", "}");
+        return std::make_unique<ForLoop>(std::move(initializer), std::move(condition), std::move(increment), std::move(body));
+    }
+
+//    std::unique_ptr<Expression> parseExpression() {
+//        if (match(TokenType::Integer)) {
+//            return std::make_unique<IntegerLiteral>(previous().value);
+//        } else if (match(TokenType::Float)) {
+//            return std::make_unique<FloatLiteral>(previous().value);
+//        } else if (match(TokenType::Character)) {
+//            return std::make_unique<CharacterLiteral>(previous().value);
+//        } else if (match(TokenType::String)) {
+//            return std::make_unique<StringLiteral>(previous().value);
+//        } else if (match(TokenType::Identifier)) {
+//            if (lookahead().value == "(") {
+//                return parseFunctionCall();
+//            } else {
+//                return std::make_unique<Variable>(previous().value);
+//            }
+//        } else if (match(TokenType::Operator) && previous().value == "+") {
+//            auto left = parseExpression();
+//            auto right = parseExpression();
+//            return std::make_unique<BinaryExpression>(std::move(left), std::move(right), "+");
+//        } else {
+//            throw std::runtime_error("Unexpected expression token");
+//        }
+//    }
+
     std::unique_ptr<Expression> parseExpression() {
+        return parseEquality();
+    }
+
+    std::unique_ptr<Expression> parseEquality() {
+        auto expr = parseComparison();
+        while (match(TokenType::Operator, "==") || match(TokenType::Operator, "!=")) {
+            std::string op = previous().value;
+            auto right = parseComparison();
+            expr = std::make_unique<BinaryExpression>(std::move(expr), std::move(right), op);
+        }
+        return expr;
+    }
+
+    std::unique_ptr<Expression> parseComparison() {
+        auto expr = parseAddition();
+        while (match(TokenType::Operator, "<") || match(TokenType::Operator, "<=") ||
+               match(TokenType::Operator, ">") || match(TokenType::Operator, ">=")) {
+            std::string op = previous().value;
+            auto right = parseAddition();
+            expr = std::make_unique<BinaryExpression>(std::move(expr), std::move(right), op);
+        }
+        return expr;
+    }
+
+    std::unique_ptr<Expression> parseAddition() {
+        auto expr = parseMultiplication();
+        while (match(TokenType::Operator, "+") && lookahead().value != "+" ||
+                match(TokenType::Operator, "-") && lookahead().value != "-") {
+            std::string op = previous().value;
+            auto right = parseMultiplication();
+            expr = std::make_unique<BinaryExpression>(std::move(expr), std::move(right), op);
+        }
+        return expr;
+    }
+
+    std::unique_ptr<Expression> parseMultiplication() {
+        auto expr = parsePrimary();
+        while (match(TokenType::Operator, "*") || match(TokenType::Operator, "/")) {
+            std::string op = previous().value;
+            auto right = parsePrimary();
+            expr = std::make_unique<BinaryExpression>(std::move(expr), std::move(right), op);
+        }
+        return expr;
+    }
+
+//    std::unique_ptr<Expression> parseIncrementExpression() {
+//        auto expr = parsePrimary();
+//        if (match(TokenType::Operator, "++")) {
+//            expr = std::make_unique<PostIncrementExpression>(std::move(expr));
+//        } else if (match(TokenType::Operator, "--")) {
+//            expr = std::make_unique<PostDecrementExpression>(std::move(expr));
+//        }
+//        return expr;
+//    }
+
+    std::unique_ptr<Expression> parsePrimary() {
         if (match(TokenType::Integer)) {
             return std::make_unique<IntegerLiteral>(previous().value);
         } else if (match(TokenType::Float)) {
@@ -300,10 +473,6 @@ private:
             } else {
                 return std::make_unique<Variable>(previous().value);
             }
-        } else if (match(TokenType::Operator) && previous().value == "+") {
-            auto left = parseExpression();
-            auto right = parseExpression();
-            return std::make_unique<BinaryExpression>(std::move(left), std::move(right), "+");
         } else {
             throw std::runtime_error("Unexpected expression token");
         }
@@ -394,6 +563,17 @@ private:
             analyzeExpression(*assign->expression);
         } else if (const auto* printStmt = dynamic_cast<const PrintStatement*>(&node)) {
             analyzeExpression(*printStmt->expression);
+        } else if (const auto* ifStmt = dynamic_cast<const IfStatement*>(&node)) {
+            analyzeExpression(*ifStmt->condition);
+            analyzeStatement(*ifStmt->thenBranch);
+            if (ifStmt->elseBranch) {
+                analyzeStatement(*ifStmt->elseBranch);
+            }
+        } else if (const auto* forLoop = dynamic_cast<const ForLoop*>(&node)) {
+            analyzeStatement(*forLoop->initializer);
+            analyzeExpression(*forLoop->condition);
+            analyzeStatement(*forLoop->increment);
+            analyzeStatement(*forLoop->body);
         }
     }
 
@@ -423,7 +603,6 @@ private:
             }
             for (size_t i = 0; i < params.size(); i++) {
                 analyzeExpression(*funcCall->arguments[i]);
-                // Additionally, you could add type-checking for arguments based on `params[i].first` and the type of `funcCall->arguments[i]`
             }
         }
     }
@@ -477,6 +656,29 @@ private:
             ss << " << std::endl;\n";
         } else if (const auto* funcCall = dynamic_cast<const FunctionCall*>(&node)) {
             ss << funcCall->identifier << "();\n";
+        } else if (const auto* ifStmt = dynamic_cast<const IfStatement*>(&node)) {
+            ss << "if ";
+            generateExpression(ss, *ifStmt->condition);
+            ss << " {\n";
+            generateStatement(ss, *ifStmt->thenBranch);
+            ss << "}\n";
+            if (ifStmt->elseBranch) {
+                ss << "else {\n";
+                generateStatement(ss, *ifStmt->elseBranch);
+                ss << "}\n";
+            }
+        } else if (const auto* forLoop = dynamic_cast<const ForLoop*>(&node)) {
+            ss << "for (";
+            generateStatement(ss, *forLoop->initializer);
+            ss.seekp(-2, std::ios_base::end);  // Remove the last semicolon for correct syntax
+            ss << "; ";
+            generateExpression(ss, *forLoop->condition);
+            ss << "; ";
+            const auto* increment = dynamic_cast<const IncrementExpression*>(&*forLoop->increment);
+            ss << increment->identifier << translateOperator(increment->op);
+            ss << ") {\n";
+            generateStatement(ss, *forLoop->body);
+            ss << "}\n";
         }
     }
 
@@ -492,11 +694,9 @@ private:
         } else if (const auto* var = dynamic_cast<const Variable*>(&expr)) {
             ss << var->identifier;
         } else if (const auto* binExpr = dynamic_cast<const BinaryExpression*>(&expr)) {
-            ss << "(";
             generateExpression(ss, *binExpr->left);
-            ss << " " << binExpr->op << " ";
+            ss << " " << translateOperator(binExpr->op) << " ";
             generateExpression(ss, *binExpr->right);
-            ss << ")";
         } else if (const auto* funcCall = dynamic_cast<const FunctionCall*>(&expr)) {
             ss << funcCall->identifier << "(";
             for (size_t i = 0; i < funcCall->arguments.size(); ++i) {
@@ -505,6 +705,21 @@ private:
             }
             ss << ")";
         }
+    }
+
+    std::string translateOperator(const std::string& op) {
+        if (op == "+") return "+";
+        else if (op == "-") return "-";
+        else if (op == "*") return "*";
+        else if (op == "/") return "/";
+        else if (op == "<") return "<";
+        else if (op == "<=") return "<=";
+        else if (op == ">") return ">";
+        else if (op == ">=") return ">=";
+        else if (op == "==") return "==";
+        else if (op == "!=") return "!=";
+        else if (op == "++") return "++";
+        return op; // Default case to handle unexpected operators
     }
 };
 
@@ -525,15 +740,9 @@ def greet() {
 }
 
 def main() {
-    int x = 10;
-    char letter = 'a';
-    print(x);
-    string name = "John";
-    greet();
-    print(name);
-    x = 15;
-    letter = 'b';
-    print(x);
+    for (int x = 5; x <= 10; x++) {
+        print("Hello");
+    }
 }
 )";
 
