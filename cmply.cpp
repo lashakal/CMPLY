@@ -5,6 +5,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <stdexcept>
+#include <fstream>
 
 enum class TokenType {
     Integer, Float, Character, String, Identifier, Keyword, Operator, EndOfFile
@@ -657,9 +658,9 @@ private:
         } else if (const auto* funcCall = dynamic_cast<const FunctionCall*>(&node)) {
             ss << funcCall->identifier << "();\n";
         } else if (const auto* ifStmt = dynamic_cast<const IfStatement*>(&node)) {
-            ss << "if ";
+            ss << "if (";
             generateExpression(ss, *ifStmt->condition);
-            ss << " {\n";
+            ss << ") {\n";
             generateStatement(ss, *ifStmt->thenBranch);
             ss << "}\n";
             if (ifStmt->elseBranch) {
@@ -733,34 +734,77 @@ private:
 
 
 int main() {
-    try {
-        std::string source = R"(
-def greet() {
-    print("Hello");
-}
+//    try {
+//        std::string source = R"(
+//def greet() {
+//    print("Hello");
+//}
+//
+//def main() {
+//    for (int x = 5; x <= 10; x++) {
+//        print("Hello");
+//    }
+//}
+//)";
 
-def main() {
-    for (int x = 5; x <= 10; x++) {
-        print("Hello");
+
+
+//        Lexer lexer(source);
+//        auto tokens = lexer.tokenize();
+//
+//        Parser parser(std::move(tokens));
+//        auto program = parser.parse();
+//
+//        SemanticAnalyzer analyzer;
+//        analyzer.analyze(program);
+//
+//        CodeGenerator generator;
+//        std::string cppCode = generator.generateCode(*program);
+//        // std::cout << cppCode;
+//    } catch (const std::exception& e) {
+//        std::cerr << "Exception caught: " << e.what() << std::endl;
+//    }
+
+    std::ifstream inputFile("/Users/lasha/CLionProjects/CMPLY/input.cmply");
+    if (!inputFile.is_open()) {
+        std::cerr << "Failed to open input file." << std::endl;
+        return 1;
     }
-}
-)";
 
-        Lexer lexer(source);
-        auto tokens = lexer.tokenize();
-
-        Parser parser(std::move(tokens));
-        auto program = parser.parse();
-
-        SemanticAnalyzer analyzer;
-        analyzer.analyze(program);
-
-        CodeGenerator generator;
-        std::string cppCode = generator.generateCode(*program);
-        std::cout << cppCode;
-    } catch (const std::exception& e) {
-        std::cerr << "Exception caught: " << e.what() << std::endl;
+    std::string line, sourceCode;
+    while (getline(inputFile, line)) {
+        sourceCode += line + "\n";
     }
+    inputFile.close();
+
+    Lexer lexer(sourceCode);
+    auto tokens = lexer.tokenize();
+
+    Parser parser(std::move(tokens));
+    auto program = parser.parse();
+
+    SemanticAnalyzer analyzer;
+    analyzer.analyze(program);
+
+    CodeGenerator generator;
+    std::string cppCode = generator.generateCode(*program);
+
+    std::ofstream outputFile("../output.cpp");
+    if (!outputFile.is_open()) {
+        std::cerr << "Failed to open output file." << std::endl;
+        return 1;
+    }
+    outputFile << cppCode;
+    outputFile.close();
+
+    // Compile the C++ source code
+#if defined(_WIN32) || defined(_WIN64)
+    system("g++ ../output.cpp -o ../output.exe"); // Windows compilation
+    system("..\\output.exe");                // Windows execution
+#else
+    system("g++ ../output.cpp -o ../output");     // Unix compilation
+    system("../output");                     // Unix execution
+#endif
 
     return 0;
 }

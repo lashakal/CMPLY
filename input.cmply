@@ -1,0 +1,19 @@
+def greet() {
+    print("Greetings!");
+}
+
+def main() {
+    for (int x = 5; x <= 10; x++) {
+        print("Hello");
+    }
+
+    greet();
+
+    int num = 10;
+    if (num < 12) {
+        print("num is less than 12");
+    } else {
+        print("num is greater than 12");
+    }
+    print(num);
+}
